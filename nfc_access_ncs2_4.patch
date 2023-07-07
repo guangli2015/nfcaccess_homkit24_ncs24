@@ -1,0 +1,228 @@
+From ba920138d21b4ed27f6f657cf5c8d35d3faacc35 Mon Sep 17 00:00:00 2001
+From: andrew li <andrew.li@nordicsemi.no>
+Date: Fri, 7 Jul 2023 14:48:44 +0800
+Subject: [PATCH] nfcaccess for ncs 2.4
+
+---
+ CMakeLists.txt                                |  7 +-
+ .../nrf52840dk_nrf52840.overlay               | 34 +++++++++
+ samples/lock/CMakeLists.txt                   |  1 +
+ samples/lock/prj.conf                         | 11 +++
+ samples/lock/prj_debug.conf                   | 10 +++
+ samples/lock/src/tag_reader.c                 | 71 +++++++++++++++++++
+ 6 files changed, 133 insertions(+), 1 deletion(-)
+ create mode 100644 samples/lock/src/tag_reader.c
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c9b129e..7c2b8e6 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -82,6 +82,10 @@ if(CONFIG_HOMEKIT)
+     target_compile_definitions(homekit_interface INTERFACE
+       HAVE_NFC=1
+       HAP_FEATURE_NFC=1
++      HAVE_NFC_ACCESS=1
++      HAP_FEATURE_NFC_ACCESS=1
++      HAVE_KEY_EXPORT=1
++      HAP_FEATURE_KEY_EXPORT=1
+     )
+   else()
+     target_compile_definitions(homekit_interface INTERFACE
+@@ -256,7 +260,7 @@ endif()
+   FILE(GLOB app_generic_input adk/Applications/Common/Platform/AppUserInputGeneric.c)
+   FILE(GLOB app_db adk/Applications/Common/DB/*.c)
+   FILE(GLOB app_helper adk/Applications/Common/Helper/*.c)
+-
++  FILE(GLOB adk_pal_nfc_access adk/PAL/nRF52/HAPPlatformNfcAccess.c)
+   list(FILTER app_helper EXCLUDE REGEX .*/adk/Applications/Common/Helper/StandardInputHandler.c)
+ 
+   
+@@ -273,6 +277,7 @@ endif()
+     ${app_generic_input}
+     ${app_db}
+     ${app_helper}
++	${adk_pal_nfc_access}
+   )
+   
+   zephyr_library_include_directories(${ZEPHYR_BASE}/subsys/bluetooth/host)
+diff --git a/samples/common/configuration/nrf52840dk_nrf52840/nrf52840dk_nrf52840.overlay b/samples/common/configuration/nrf52840dk_nrf52840/nrf52840dk_nrf52840.overlay
+index 0357cfa..994ba2f 100644
+--- a/samples/common/configuration/nrf52840dk_nrf52840/nrf52840dk_nrf52840.overlay
++++ b/samples/common/configuration/nrf52840dk_nrf52840/nrf52840dk_nrf52840.overlay
+@@ -11,6 +11,22 @@
+ &pwm0 {
+ 	status = "disabled";
+ };
++&spi0 {
++	compatible = "nordic,nrf-spi";
++	status = "okay";
++	cs-gpios = <&gpio1 12 GPIO_ACTIVE_LOW>;
++
++	pinctrl-0 = <&spi0_default_alt>;
++	pinctrl-1 = <&spi0_sleep_alt>;
++	pinctrl-names = "default", "sleep";
++	st25r3911b@0 {
++		compatible = "st,st25r3911b";
++		reg = <0>;
++		spi-max-frequency = <4000000>;
++		irq-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
++		led-nfca-gpios = <&gpio0 29 GPIO_ACTIVE_HIGH>;
++	};
++};
+ &spi1 {
+ 	status = "disabled";
+ };
+@@ -20,3 +36,21 @@
+ &usbd {
+ 	status = "disabled";
+ };
++&pinctrl {
++	spi0_default_alt: spi0_default_alt {
++		group1 {
++			psels = <NRF_PSEL(SPIM_SCK, 1, 15)>,
++				<NRF_PSEL(SPIM_MOSI, 1, 13)>,
++				<NRF_PSEL(SPIM_MISO, 1, 14)>;
++		};
++	};
++
++	spi0_sleep_alt: spi0_sleep_alt {
++		group1 {
++			psels = <NRF_PSEL(SPIM_SCK, 1, 15)>,
++				<NRF_PSEL(SPIM_MOSI, 1, 13)>,
++				<NRF_PSEL(SPIM_MISO, 1, 14)>;
++			low-power-enable;
++		};
++	};
++};
+diff --git a/samples/lock/CMakeLists.txt b/samples/lock/CMakeLists.txt
+index cdcd7a4..2feca22 100644
+--- a/samples/lock/CMakeLists.txt
++++ b/samples/lock/CMakeLists.txt
+@@ -45,6 +45,7 @@ find_package(Zephyr HINTS $ENV{ZEPHYR_BASE})
+ project(homekit_lock)
+ 
+ target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app.c)
++target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/tag_reader.c)
+ target_sources(app PRIVATE ${COMMON_ROOT}/src/main.c)
+ target_sources(app PRIVATE ${COMMON_ROOT}/src/hap.c)
+ 
+diff --git a/samples/lock/prj.conf b/samples/lock/prj.conf
+index 684d8b9..68e04cb 100644
+--- a/samples/lock/prj.conf
++++ b/samples/lock/prj.conf
+@@ -62,3 +62,14 @@ CONFIG_UART_CONSOLE=n
+ 
+ # Stacks
+ CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4492
++
++
++CONFIG_SPI=y
++
++CONFIG_ST25R3916_LIB=y
++CONFIG_POLL=y
++
++
++
++CONFIG_ST25R3916_LIB_LOG_LEVEL_INF=y
++CONFIG_LOG_DEFAULT_LEVEL=4
+\ No newline at end of file
+diff --git a/samples/lock/prj_debug.conf b/samples/lock/prj_debug.conf
+index 6994fc7..08166b1 100644
+--- a/samples/lock/prj_debug.conf
++++ b/samples/lock/prj_debug.conf
+@@ -84,3 +84,13 @@ CONFIG_RESET_ON_FATAL_ERROR=n
+ 
+ # Stacks
+ CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4492
++
++CONFIG_SPI=y
++
++CONFIG_ST25R3916_LIB=y
++CONFIG_POLL=y
++
++
++
++CONFIG_ST25R3916_LIB_LOG_LEVEL_INF=y
++CONFIG_LOG_DEFAULT_LEVEL=4
+\ No newline at end of file
+diff --git a/samples/lock/src/tag_reader.c b/samples/lock/src/tag_reader.c
+new file mode 100644
+index 0000000..8d5e9a2
+--- /dev/null
++++ b/samples/lock/src/tag_reader.c
+@@ -0,0 +1,71 @@
++/* main.c - Application main entry point */
++
++/*
++ * Copyright (c) 2019 Nordic Semiconductor ASA
++ *
++ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
++ */
++
++#include <zephyr/types.h>
++#include <stddef.h>
++#include <stdbool.h>
++#include <string.h>
++#include <zephyr/kernel.h>
++#include <zephyr/sys/printk.h>
++#include <st25r3911b_nfca.h>
++#include <nfc/ndef/msg_parser.h>
++#include <nfc/ndef/le_oob_rec_parser.h>
++#include <nfc/t2t/parser.h>
++#include <nfc/t4t/ndef_file.h>
++#include <nfc/t4t/isodep.h>
++#include <nfc/t4t/hl_procedure.h>
++#include <nfc/ndef/ch_rec_parser.h>
++#include <zephyr/sys/byteorder.h>
++#include <st25r3916_nfca.h>
++#include "st25r3916_irq.h"
++
++#define MY_STACK_SIZE 1024
++#define MY_PRIORITY -2
++static K_SEM_DEFINE(irq_sem, 0, 1);
++int is=0;
++void my_entry_point(int unused1, int unused2, int unused3)
++{
++	int err;
++	while(1){
++		err = k_sem_take(&irq_sem, K_FOREVER);
++		if (err) {
++			return;
++		}
++		st25r3916Isr();
++
++	}
++
++}
++
++K_THREAD_STACK_DEFINE(my_stack_area, MY_STACK_SIZE);
++
++void tag_reader(int unused1, int unused2, int unused3)
++{
++	int err;
++
++
++	st25r3916InitInterrupts(&irq_sem);
++	struct k_thread my_thread_data;
++	
++	k_tid_t my_tid = k_thread_create(&my_thread_data, my_stack_area,
++									 K_THREAD_STACK_SIZEOF(my_stack_area),
++									 my_entry_point,
++									 NULL, NULL, NULL,
++									 MY_PRIORITY, 0, K_NO_WAIT);
++
++	err = st25r3916_nfca_init();
++	if (err) {
++		return err;
++	}
++
++	while(1)
++	{	
++		k_sleep(K_SECONDS(1));
++	}
++}
++K_THREAD_DEFINE(tag, 2048, tag_reader, NULL, NULL, NULL, 5, 0, 0);
+\ No newline at end of file
+-- 
+2.33.0.windows.2
+

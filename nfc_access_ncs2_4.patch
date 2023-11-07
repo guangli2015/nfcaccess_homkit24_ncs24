@@ -1,7 +1,7 @@
-From 9cabe3c6fe49ff3ea12116c5af002f18dbec56eb Mon Sep 17 00:00:00 2001
+From 00f66358c4b68ba571613041f9013bec11305f93 Mon Sep 17 00:00:00 2001
 From: andrew li <andrew.li@nordicsemi.no>
-Date: Mon, 30 Oct 2023 15:08:29 +0800
-Subject: [PATCH] homekey NFC lock release
+Date: Tue, 7 Nov 2023 14:23:25 +0800
+Subject: [PATCH] home key release117
 
 ---
  CMakeLists.txt                                |   7 +-
@@ -12,8 +12,8 @@ Subject: [PATCH] homekey NFC lock release
  samples/lock/prj_debug.conf                   |  32 +-
  samples/lock/src/app.c                        |  10 +
  samples/lock/src/tag_reader.c                 |  94 ++
- samples/lock/src/uaap_cmds.c                  | 913 ++++++++++++++++++
- 9 files changed, 1126 insertions(+), 5 deletions(-)
+ samples/lock/src/uaap_cmds.c                  | 921 ++++++++++++++++++
+ 9 files changed, 1134 insertions(+), 5 deletions(-)
  create mode 100644 samples/lock/src/tag_reader.c
  create mode 100644 samples/lock/src/uaap_cmds.c
 
@@ -256,7 +256,7 @@ index fbcee27..a10deec 100644
   */
 diff --git a/samples/lock/src/tag_reader.c b/samples/lock/src/tag_reader.c
 new file mode 100644
-index 0000000..f238f26
+index 0000000..819b358
 --- /dev/null
 +++ b/samples/lock/src/tag_reader.c
 @@ -0,0 +1,94 @@
@@ -353,13 +353,13 @@ index 0000000..f238f26
 +#endif
 +#endif
 +}
-+K_THREAD_DEFINE(tag, 4096, tag_reader, NULL, NULL, NULL, 5, 0, 0);
++K_THREAD_DEFINE(tag, 4096, tag_reader, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO , 0, 0);
 diff --git a/samples/lock/src/uaap_cmds.c b/samples/lock/src/uaap_cmds.c
 new file mode 100644
-index 0000000..aade6fd
+index 0000000..5a1a073
 --- /dev/null
 +++ b/samples/lock/src/uaap_cmds.c
-@@ -0,0 +1,913 @@
+@@ -0,0 +1,921 @@
 +/******************************************************************************
 +  * @attention
 +  *
@@ -1031,23 +1031,23 @@ index 0000000..aade6fd
 +	if (status != PSA_SUCCESS)
 +		{
 +            LOG_INF("psa_crypto_init failed!\n");
-+            return ;
++            return -1;
 +        }
 +
 +    status = generate_ephem_keypair();
 +	if (status != 0) {
 +		LOG_INF("generate_ecdsa_keypair fail");
-+		return ;
++		return -1;
 +	}
 +    status = psa_generate_random(transaction_id, sizeof(transaction_id));
 +		if (status != PSA_SUCCESS) {
 +			LOG_INF("psa_generate_random failed! (Error: %d)", status);
-+			return ;
++			return -1;
 +		}
 +    status = psa_generate_random(reader_group_sub_id, sizeof(reader_group_sub_id));
 +		if (status != PSA_SUCCESS) {
 +			LOG_INF("psa_generate_random failed! (Error: %d)", status);
-+			return ;
++			return -1;
 +		}
 +
 +   // PRINT_HEX("transaction_id", transaction_id, 16);
@@ -1076,6 +1076,7 @@ index 0000000..aade6fd
 +    }
 +    else
 +    {
++		crypto_finish();
 +        return -1;
 +    }
 +
@@ -1083,7 +1084,7 @@ index 0000000..aade6fd
 +}
 +
 +
-+void Make_AUTH1_cmd()
++int Make_AUTH1_cmd()
 +{
 +    uint8_t auth1_head[]={0x80,0x81,0x01,0x00,0x42};
 +    uint8_t reader_sig_head[]={0x9e,0x40};
@@ -1124,6 +1125,8 @@ index 0000000..aade6fd
 +    else 
 +    {   
 +         PRINT_HEX("au1ReE", rxData, *rxLen);
++		 crypto_finish();
++		 return -1;
 +    }
 +
 +     uint8_t s_secret[32]={0};
@@ -1208,7 +1211,7 @@ index 0000000..aade6fd
 +    }
 +
 +    crypto_finish();
-+
++	return 0;
 +}   
 +
 +void Make_control_flow_cmd()
@@ -1263,12 +1266,17 @@ index 0000000..aade6fd
 +    {
 +        return;
 +    }
++	k_sleep(K_MSEC(30));
 +    if(0 != Make_AUTH0_cmd())
 +    {
 +        return;
 +    }
-+   
-+    Make_AUTH1_cmd();
++    k_sleep(K_MSEC(30));
++    if(0 != Make_AUTH1_cmd())
++	{
++		return;
++	}
++	k_sleep(K_MSEC(30));
 +    Make_control_flow_cmd();
 +    
 +

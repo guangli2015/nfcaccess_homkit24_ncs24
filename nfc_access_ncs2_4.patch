@@ -1,19 +1,19 @@
-From 00f66358c4b68ba571613041f9013bec11305f93 Mon Sep 17 00:00:00 2001
+From 1b24a286f9c2175b7ee68cbf00f21100e6c5e2ab Mon Sep 17 00:00:00 2001
 From: andrew li <andrew.li@nordicsemi.no>
-Date: Tue, 7 Nov 2023 14:23:25 +0800
-Subject: [PATCH] home key release117
+Date: Fri, 15 Dec 2023 16:13:05 +0800
+Subject: [PATCH] homekey release 12/15
 
 ---
- CMakeLists.txt                                |   7 +-
- adk/PAL/nRF52/HAPPlatformNfcAccess.c          |  24 +-
- .../nrf52840dk_nrf52840.overlay               |  34 +
- samples/lock/CMakeLists.txt                   |   2 +
- samples/lock/prj.conf                         |  15 +
- samples/lock/prj_debug.conf                   |  32 +-
- samples/lock/src/app.c                        |  10 +
- samples/lock/src/tag_reader.c                 |  94 ++
- samples/lock/src/uaap_cmds.c                  | 921 ++++++++++++++++++
- 9 files changed, 1134 insertions(+), 5 deletions(-)
+ CMakeLists.txt                                |    7 +-
+ adk/PAL/nRF52/HAPPlatformNfcAccess.c          |   34 +-
+ .../nrf52840dk_nrf52840.overlay               |   34 +
+ samples/lock/CMakeLists.txt                   |    2 +
+ samples/lock/prj.conf                         |   25 +-
+ samples/lock/prj_debug.conf                   |   32 +-
+ samples/lock/src/app.c                        |   10 +
+ samples/lock/src/tag_reader.c                 |   95 +
+ samples/lock/src/uaap_cmds.c                  | 1690 +++++++++++++++++
+ 9 files changed, 1921 insertions(+), 8 deletions(-)
  create mode 100644 samples/lock/src/tag_reader.c
  create mode 100644 samples/lock/src/uaap_cmds.c
 
@@ -50,10 +50,10 @@ index c9b129e..345f5bd 100644
    
    zephyr_library_include_directories(${ZEPHYR_BASE}/subsys/bluetooth/host)
 diff --git a/adk/PAL/nRF52/HAPPlatformNfcAccess.c b/adk/PAL/nRF52/HAPPlatformNfcAccess.c
-index e4a8d27..3427b92 100644
+index e4a8d27..079fcde 100644
 --- a/adk/PAL/nRF52/HAPPlatformNfcAccess.c
 +++ b/adk/PAL/nRF52/HAPPlatformNfcAccess.c
-@@ -50,9 +50,20 @@
+@@ -50,9 +50,22 @@
  #include "HAPCharacteristicTypes.h"
  #include "HAPCrypto.h"
  #include "HAPPlatform.h"
@@ -72,11 +72,35 @@ index e4a8d27..3427b92 100644
 +// add by andrew
 +extern uint8_t reader_SK[NFC_ACCESS_READER_KEY_BYTES];
 +extern uint8_t reader_group_id[NFC_ACCESS_KEY_IDENTIFIER_BYTES];
++extern uint8_t issuekey_identifier[8];
++extern bool device_credential_key_added;
 +extern void writeToFlash(void *data , size_t len);
  /**
   * The salt value used with a key value to create a hash for the Identifier field
   */
-@@ -1289,6 +1300,15 @@ HAPError HAPPlatformNfcAccessReaderKeyAdd(
+@@ -831,7 +844,9 @@ HAPError HAPPlatformNfcAccessIssuerKeyAdd(
+     HAPRawBufferCopyBytes(entry->identifier, identifier, NFC_ACCESS_KEY_IDENTIFIER_BYTES);
+ 
+     // VENDOR-TODO: Add issuer key to the reader
+-
++     PRINT_HEX("issuekey",issuerKey->key,  issuerKey->keyNumBytes);
++     PRINT_HEX("Identifier",  identifier, NFC_ACCESS_KEY_IDENTIFIER_BYTES);
++     HAPRawBufferCopyBytes(issuekey_identifier, identifier, NFC_ACCESS_KEY_IDENTIFIER_BYTES);
+     nfcAccessIssuerKeyList.numEntries++;
+ 
+     HAPError err = HAPPlatformKeyValueStoreSet(
+@@ -1110,7 +1125,9 @@ HAPError HAPPlatformNfcAccessDeviceCredentialKeyAdd(
+ 
+     // VENDOR-TODO: Either add device credential key to the reader or update the entry with a new key if the LRU is
+     // evicted
+-
++    device_credential_key_added=true;
++    PRINT_HEX("deviceCredentialKey",deviceCredentialKey->key,  deviceCredentialKey->keyNumBytes);
++     PRINT_HEX("issuerKeyIdentifier",  deviceCredentialKey->issuerKeyIdentifier, NFC_ACCESS_KEY_IDENTIFIER_BYTES);
+     IncrementDeviceCredentialKeyNumEntries(deviceCredentialKey->state);
+ 
+     if (nfcAccessDeviceCredentialKeyList.counter == 0) {
+@@ -1289,6 +1306,15 @@ HAPError HAPPlatformNfcAccessReaderKeyAdd(
      }
  
      // VENDOR-TODO: Add reader key to the reader
@@ -155,10 +179,21 @@ index cdcd7a4..6fd1bd4 100644
  target_sources(app PRIVATE ${COMMON_ROOT}/src/hap.c)
  
 diff --git a/samples/lock/prj.conf b/samples/lock/prj.conf
-index 684d8b9..344411f 100644
+index 684d8b9..0604428 100644
 --- a/samples/lock/prj.conf
 +++ b/samples/lock/prj.conf
-@@ -62,3 +62,18 @@ CONFIG_UART_CONSOLE=n
+@@ -43,8 +43,9 @@ CONFIG_MCUBOOT_IMAGE_VERSION="1.0.0+0"
+ CONFIG_BOOTLOADER_MCUBOOT=y
+ 
+ # Miscellaneous
++CONFIG_MAIN_STACK_SIZE=8192
+ CONFIG_MPU_STACK_GUARD=y
+-CONFIG_HEAP_MEM_POOL_SIZE=1024
++CONFIG_HEAP_MEM_POOL_SIZE=8192
+ CONFIG_ASSERT=n
+ CONFIG_DK_LIBRARY=y
+ CONFIG_REBOOT=y
+@@ -62,3 +63,25 @@ CONFIG_UART_CONSOLE=n
  
  # Stacks
  CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4492
@@ -171,25 +206,32 @@ index 684d8b9..344411f 100644
 +
 +
 +
-+CONFIG_ST25R3916_LIB_LOG_LEVEL_INF=y
-+CONFIG_LOG_DEFAULT_LEVEL=4
++#CONFIG_ST25R3916_LIB_LOG_LEVEL_INF=y
++#CONFIG_LOG_DEFAULT_LEVEL=4
 +
++# Enable nordic security backend and PSA APIs
++CONFIG_NRF_SECURITY=y
++CONFIG_MBEDTLS_PSA_CRYPTO_C=y
 +
++CONFIG_MBEDTLS_ENABLE_HEAP=y
++CONFIG_MBEDTLS_HEAP_SIZE=8192
++# The Zephyr CMSIS emulation assumes that ticks are ms, currently
++CONFIG_SYS_CLOCK_TICKS_PER_SEC=1000
 +CONFIG_STDOUT_CONSOLE=y
 +CONFIG_FLASH=y
 \ No newline at end of file
 diff --git a/samples/lock/prj_debug.conf b/samples/lock/prj_debug.conf
-index 6994fc7..9217cd4 100644
+index 6994fc7..d8f4534 100644
 --- a/samples/lock/prj_debug.conf
 +++ b/samples/lock/prj_debug.conf
 @@ -43,15 +43,19 @@ CONFIG_MCUBOOT_IMAGE_VERSION="1.0.0+0"
  CONFIG_BOOTLOADER_MCUBOOT=y
  
  # Miscellaneous
-+CONFIG_MAIN_STACK_SIZE=4096
++CONFIG_MAIN_STACK_SIZE=8192
  CONFIG_MPU_STACK_GUARD=y
 -CONFIG_HEAP_MEM_POOL_SIZE=1024
-+CONFIG_HEAP_MEM_POOL_SIZE=4096
++CONFIG_HEAP_MEM_POOL_SIZE=8192
  CONFIG_ASSERT=n
  CONFIG_DK_LIBRARY=y
  CONFIG_REBOOT=y
@@ -256,10 +298,10 @@ index fbcee27..a10deec 100644
   */
 diff --git a/samples/lock/src/tag_reader.c b/samples/lock/src/tag_reader.c
 new file mode 100644
-index 0000000..819b358
+index 0000000..8bf54f0
 --- /dev/null
 +++ b/samples/lock/src/tag_reader.c
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,95 @@
 +/* main.c - Application main entry point */
 +
 +/*
@@ -294,7 +336,7 @@ index 0000000..819b358
 +static K_SEM_DEFINE(irq_sem, 0, 1);
 +//static K_SEM_DEFINE(rfal_sem, 0, 1);
 +int is=0;
-+
++extern bool device_credential_key_added;
 +extern void flash_setup();
 +
 +void my_entry_point(int unused1, int unused2, int unused3)
@@ -322,6 +364,7 @@ index 0000000..819b358
 +{
 +	int err;
 +    printk("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n");
++	device_credential_key_added=false;
 +#if 1
 +	st25r3916InitInterrupts(&irq_sem);
 +	struct k_thread my_thread_data;
@@ -353,13 +396,13 @@ index 0000000..819b358
 +#endif
 +#endif
 +}
-+K_THREAD_DEFINE(tag, 4096, tag_reader, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO , 0, 0);
++K_THREAD_DEFINE(tag, 8192, tag_reader, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO , 0, 0);
 diff --git a/samples/lock/src/uaap_cmds.c b/samples/lock/src/uaap_cmds.c
 new file mode 100644
-index 0000000..5a1a073
+index 0000000..84e4344
 --- /dev/null
 +++ b/samples/lock/src/uaap_cmds.c
-@@ -0,0 +1,921 @@
+@@ -0,0 +1,1690 @@
 +/******************************************************************************
 +  * @attention
 +  *
@@ -416,7 +459,12 @@ index 0000000..5a1a073
 +#include "logger.h"
 +#include <psa/crypto.h>
 +#include <psa/crypto_extra.h>
++#include "HAP+API.h"
++#include "HAP.h"
 +
++#include "AccessoryInformationServiceDB.h"
++#include "App.h"
++#include "AppBase.h"
 +#define SPI_FLASH_TEST_REGION_OFFSET 0xff000
 +
 +#define SPI_FLASH_SECTOR_SIZE        4096
@@ -436,6 +484,7 @@ index 0000000..5a1a073
 + * GLOBAL MACROS
 + ******************************************************************************
 + */
++#define UAAP_DEBUG
 +#ifdef UAAP_DEBUG
 +#define PRINT_HEX(p_label, p_text, len)\
 +	({\
@@ -486,12 +535,22 @@ index 0000000..5a1a073
 +static psa_key_handle_t hkdf_out_keypair_handle;
 +static psa_key_handle_t aes_keypair_handle;
 +static psa_key_handle_t endp_pub_key_handle;
++static psa_key_handle_t cmac_key_handle;
++
++static psa_key_handle_t hkdf_in_handle_stepup;
++static psa_key_handle_t hkdf_out_handle_stepup;
++static psa_key_handle_t aesgcm_key_handle;
++static psa_key_handle_t aesgcm_key_handle_device;
++static psa_key_handle_t hkdf_in_handle_fast;
++static psa_key_handle_t hkdf_out_handle_fast;
++static psa_key_handle_t get_reader_pubkey_handle;
 +uint8_t reader_SK[32]={0};
++static uint8_t reader_PK[65];
 +static uint8_t reader_eSK[32]={0};
 +
 +static uint8_t endp_pub_key[65];
-+
-+
++static uint8_t hkdf_output_key48[48];
++static uint8_t s_secret[32]={0};
 +
 +
 +static int import_ecdsa_prv_key(void);
@@ -509,6 +568,13 @@ index 0000000..5a1a073
 +static int verify_endp_message(uint8_t *endp_sig,size_t sig_size);
 +static int encrypt_cbc_aes(uint8_t * m_encrypted_text,size_t en_size,uint8_t *m_plain_text ,size_t pl_size,uint8_t * m_iv);
 +
++uint8_t issuekey_identifier[8];
++bool device_credential_key_added=false;
++static uint8_t device_credential_key[64];
++static uint8_t kPersistent[32];
++//static bool auth1_have_done=false;
++static bool reader_group_sub_id_gen=false;
++static	bool crypotogram_matched=false;
 +extern void read_from_flash(uint8_t *tmp, size_t size);
 +
 +static int crypto_finish(void)
@@ -517,46 +583,47 @@ index 0000000..5a1a073
 +
 +	/* Destroy the key handle */
 +	status = psa_destroy_key(keypair_handle);
-+	if (status != PSA_SUCCESS) {
-+		LOG_INF("psa_destroy_key failed! (Error: %d)", status);
-+		return -1;
-+	}
++
 +
 +	status = psa_destroy_key(auth1_keypair_handle);
-+	if (status != PSA_SUCCESS) {
-+		LOG_INF("psa_destroy_key failed! (Error: %d)", status);
-+		return -1;
-+	}
++
 +
 +    status = psa_destroy_key(ecdh_keypair_handle);
-+	if (status != PSA_SUCCESS) {
-+		LOG_INF("psa_destroy_key failed! (Error: %d)", status);
-+		return -1;
-+	}
++
 +
 +    status = psa_destroy_key(hkdf_in_keypair_handle);
-+	if (status != PSA_SUCCESS) {
-+		LOG_INF("psa_destroy_key failed! (Error: %d)", status);
-+		return -1;
-+	}
++
 +
 +    status = psa_destroy_key(hkdf_out_keypair_handle);
-+	if (status != PSA_SUCCESS) {
-+		LOG_INF("psa_destroy_key failed! (Error: %d)", status);
-+		return -1;
-+	}
++
 +
 +    status = psa_destroy_key(aes_keypair_handle);
-+	if (status != PSA_SUCCESS) {
-+		LOG_INF("psa_destroy_key failed! (Error: %d)", status);
-+		return -1;
-+	}
++
 +
 +     status = psa_destroy_key(endp_pub_key_handle);
-+	if (status != PSA_SUCCESS) {
-+		LOG_INF("psa_destroy_key failed! (Error: %d)", status);
-+		return -1;
-+	}
++
++
++	status = psa_destroy_key(cmac_key_handle);
++
++
++	status = psa_destroy_key(hkdf_in_handle_stepup);
++
++
++	status = psa_destroy_key(hkdf_out_handle_stepup);
++	
++	status = psa_destroy_key(aesgcm_key_handle);
++
++	status = psa_destroy_key(aesgcm_key_handle_device);
++
++
++	status = psa_destroy_key(hkdf_in_handle_fast);
++
++
++	status = psa_destroy_key(hkdf_out_handle_fast);
++
++	status = psa_destroy_key(get_reader_pubkey_handle);
++
++	
 +	return 0;
 +}
 +static int generate_ephem_keypair(void)
@@ -657,7 +724,7 @@ index 0000000..5a1a073
 +	psa_set_key_algorithm(&key_attributes, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
 +	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
 +	//psa_set_key_bits(&key_attributes, 256);
-+    PRINT_HEX("reader_SKecdsa", reader_SK, 32);
++   // PRINT_HEX("reader_SKecdsa", reader_SK, 32);
 +	status = psa_import_key(&key_attributes, reader_SK, sizeof(reader_SK), &auth1_keypair_handle);
 +	if (status != PSA_SUCCESS) {
 +		LOG_INF("psa_import_key failed! (Error: %d)", status);
@@ -745,7 +812,31 @@ index 0000000..5a1a073
 +LOG_INF("import_hkdf_input_key successfully!");
 +	return 0;
 +}
++static int import_hkdf_input_key_fast(uint8_t *key)
++{
++	psa_status_t status;
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
 +
++	/* Configure the input key attributes */
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_DERIVE);
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_algorithm(&key_attributes, PSA_ALG_HKDF(PSA_ALG_SHA_256));
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_DERIVE);
++	psa_set_key_bits(&key_attributes,
++			 32 * 8);
++    //PRINT_HEX("kdhhkdf", kdh, 32);
++	/* Import the master key into the keystore */
++	status = psa_import_key(&key_attributes,
++				key,
++				32,
++				&hkdf_in_handle_fast);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_import_key failed! (Error: %d)", status);
++		return -1;
++	}
++LOG_INF("import_hkdf_input_key fast successfully!");
++	return 0;
++}
 +static int derive_hkdf(size_t out_key_size,uint8_t * m_ainfo , size_t info_len)
 +{
 +	psa_status_t status;
@@ -811,7 +902,70 @@ index 0000000..5a1a073
 +	return 0;
 +}
 +
++static int derive_hkdf_fast(size_t out_key_size,uint8_t * m_ainfo , size_t info_len)
++{
++	psa_status_t status;
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++	psa_key_derivation_operation_t operation =
++		PSA_KEY_DERIVATION_OPERATION_INIT;
 +
++	LOG_INF("Deriving a key using HKDF and SHA256...");
++
++	/* Derived key settings
++	 * WARNING: This key usage makes the key exportable which is not safe and
++	 * is only done to demonstrate the validity of the results. Please do not use
++	 * this in production environments.
++	 */
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_RAW_DATA);
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_EXPORT); /* DONT USE IN PRODUCTION */
++	psa_set_key_bits(&key_attributes, out_key_size * 8);
++
++	/* Set the derivation algorithm */
++	status = psa_key_derivation_setup(&operation,
++					  PSA_ALG_HKDF(PSA_ALG_SHA_256));
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_setup failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Set the master key for the operation */
++	status = psa_key_derivation_input_key(
++		&operation, PSA_KEY_DERIVATION_INPUT_SECRET, hkdf_in_handle_fast);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_input_key failed! (Error: %d)", status);
++		return -1;
++	}
++
++    //PRINT_HEX("m_ainfo", m_ainfo, info_len);
++	/* Set the additional info for the operation */
++	status = psa_key_derivation_input_bytes(&operation,
++						PSA_KEY_DERIVATION_INPUT_INFO,
++						m_ainfo,
++						info_len);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_input_bytes failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Store the derived key in the keystore slot pointed by out_key_handle */
++	status = psa_key_derivation_output_key(&key_attributes, &operation, &hkdf_out_handle_fast);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_output_key failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Clean up the context */
++	status = psa_key_derivation_abort(&operation);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_abort failed! (Error: %d)", status);
++		return -1;
++	}
++
++	LOG_INF("Key derivation successful!");
++
++	return 0;
++}
 +static int aes_import_key(uint8_t * kenc)
 +{
 +	psa_status_t status;
@@ -1005,6 +1159,101 @@ index 0000000..5a1a073
 +    
 +	return 0;
 +}
++
++static int import_cmac_key(uint8_t * key)
++{
++	/* Configure the key attributes */
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++	psa_status_t status;
++	/* Import a key */
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE);
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_algorithm(&key_attributes, PSA_ALG_CMAC);
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_AES);
++	psa_set_key_bits(&key_attributes, 128);
++
++	status = psa_import_key(&key_attributes, key, 16, &cmac_key_handle);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_import_key failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* After the key handle is acquired the attributes are not needed */
++	psa_reset_key_attributes(&key_attributes);
++
++	return 0;
++}
++
++static int cmac_sign(uint8_t *m_plain_text ,size_t pl_size,uint8_t *cmac ,size_t cmac_size)
++{
++	uint32_t olen;
++	psa_status_t status;
++	psa_mac_operation_t operation = PSA_MAC_OPERATION_INIT;
++
++	LOG_INF("Signing using CMAC ...");
++
++	status = psa_mac_sign_setup(&operation, cmac_key_handle, PSA_ALG_CMAC);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_mac_sign_setup failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Perform the HMAC signing */
++	status = psa_mac_update(&operation, m_plain_text, pl_size);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_mac_update failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Finalize the HMAC signing */
++	status = psa_mac_sign_finish(&operation, cmac, cmac_size, &olen);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_mac_sign_finish failed! (Error: %d)", status);
++		return -1;
++	}
++
++	LOG_INF("Signing CMAC successful!");
++	//PRINT_HEX("Plaintext", m_plain_text, sizeof(m_plain_text));
++	//PRINT_HEX("cMAC", cmac, sizeof(cmac));
++
++	return 0;
++}
++
++
++int get_reader_pub_key(void)
++{
++	psa_status_t status;
++	size_t olen;
++
++	
++
++	/* Configure the key attributes */
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++
++	/* Configure the key attributes */
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_SIGN_HASH);
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_algorithm(&key_attributes, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
++	psa_set_key_bits(&key_attributes, 256);
++
++	status = psa_import_key(&key_attributes, reader_SK, sizeof(reader_SK), &get_reader_pubkey_handle);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_import_key failed! (Error: %d)", status);
++		return -1;
++	}
++	/* Export the public key */
++	status = psa_export_public_key(get_reader_pubkey_handle, reader_PK, sizeof(reader_PK), &olen);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_export_public_key failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* After the key handle is acquired the attributes are not needed */
++	psa_reset_key_attributes(&key_attributes);
++
++	return 0;
++}
 +int Make_AUTH0_cmd()
 +{
 +    psa_status_t status;
@@ -1019,11 +1268,11 @@ index 0000000..5a1a073
 +    uint16_t   *rxLen;
 +    uint8_t    *rxData;
 +    int rc;
-+    uint8_t temp[40];
++ //   uint8_t temp[40];
 +    LOG_INF("AUTH0_make start...\n");
-+    read_from_flash(temp,40);
-+    memcpy(reader_group_id,temp,sizeof(reader_group_id));
-+    memcpy(reader_SK,temp+sizeof(reader_group_id),sizeof(reader_SK));
++ //   read_from_flash(temp,40);
++ //   memcpy(reader_group_id,temp,sizeof(reader_group_id));
++ //   memcpy(reader_SK,temp+sizeof(reader_group_id),sizeof(reader_SK));
 +	PRINT_HEX("reader_SK",reader_SK, 32);
 +    PRINT_HEX("r_g_id", reader_group_id, 8);
 +   	/* Initialize PSA Crypto */
@@ -1044,11 +1293,15 @@ index 0000000..5a1a073
 +			LOG_INF("psa_generate_random failed! (Error: %d)", status);
 +			return -1;
 +		}
-+    status = psa_generate_random(reader_group_sub_id, sizeof(reader_group_sub_id));
++	if(reader_group_sub_id_gen == false)
++	{
++    	status = psa_generate_random(reader_group_sub_id, sizeof(reader_group_sub_id));
 +		if (status != PSA_SUCCESS) {
 +			LOG_INF("psa_generate_random failed! (Error: %d)", status);
 +			return -1;
 +		}
++		reader_group_sub_id_gen=true;
++	}
 +
 +   // PRINT_HEX("transaction_id", transaction_id, 16);
 +   // PRINT_HEX("reader_group_sub_id", reader_group_sub_id, 8);
@@ -1072,15 +1325,55 @@ index 0000000..5a1a073
 +        {
 +            memcpy(endp_ePK,rxData+2,65);
 +        }
-+        return 0;
++		 PRINT_HEX("au0Re", rxData, *rxLen);
++        //return 0;
 +    }
 +    else
 +    {
-+		crypto_finish();
++		//crypto_finish();
 +        return -1;
 +    }
++	import_hkdf_input_key_fast(kPersistent);
++	get_reader_pub_key();
++	PRINT_HEX("Reader_pub_key", reader_PK, 65);
++	uint8_t auth0_hkdf_info_64[185];
++	uint8_t info_str[]={0x56 ,0x6F ,0x6C ,0x61 ,0x74 ,0x69 ,0x6C ,0x65 ,0x46 ,0x61 ,0x73 ,0x74};
++	uint8_t interface_to_end_48[]={0x5E ,0x01 ,0x01 ,0x56 ,0x6F ,0x6C ,0x61 ,0x74 ,0x69 ,0x6C ,0x65 ,0x5C ,0x02 ,0x02 ,0x00 ,0x5C ,0x04 ,0x02 ,0x00 ,0x01 ,0x00 };
++    uint8_t interface_to_64[]={0x5E ,0x5C ,0x04 ,0x02 ,0x00 ,0x01 ,0x00 ,0x5C ,0x02 ,0x02 ,0x00 };
++	uint8_t flag[]={0x01,0x01};
++    memcpy(auth0_hkdf_info_64,reader_PK+1,32);
++	memcpy(auth0_hkdf_info_64+32,info_str,sizeof(info_str));
++    memcpy(auth0_hkdf_info_64+32+sizeof(info_str),reader_group_id,sizeof(reader_group_id));
++	memcpy(auth0_hkdf_info_64+32+sizeof(info_str)+sizeof(reader_group_id),reader_group_sub_id,sizeof(reader_group_sub_id));
++	memcpy(auth0_hkdf_info_64+32+sizeof(info_str)+sizeof(reader_group_id)+sizeof(reader_group_sub_id),endp_pub_key+1,32);
++	memcpy(auth0_hkdf_info_64+32+sizeof(info_str)+sizeof(reader_group_id)+sizeof(reader_group_sub_id)+32,interface_to_64,sizeof(interface_to_64));
++	memcpy(auth0_hkdf_info_64+32+sizeof(info_str)+sizeof(reader_group_id)+sizeof(reader_group_sub_id)+32+sizeof(interface_to_64),reader_ePK+1,32);
++	memcpy(auth0_hkdf_info_64+32+sizeof(info_str)+sizeof(reader_group_id)+sizeof(reader_group_sub_id)+32+sizeof(interface_to_64)+32,transaction_id,sizeof(transaction_id));
++	memcpy(auth0_hkdf_info_64+32+sizeof(info_str)+sizeof(reader_group_id)+sizeof(reader_group_sub_id)+32+sizeof(interface_to_64)+32+sizeof(transaction_id),flag,sizeof(flag));
++   	memcpy(auth0_hkdf_info_64+32+sizeof(info_str)+sizeof(reader_group_id)+sizeof(reader_group_sub_id)+32+sizeof(interface_to_64)+32+sizeof(transaction_id)+sizeof(flag),endp_ePK+1,32);
++	derive_hkdf_fast( 64,auth0_hkdf_info_64 , sizeof(auth0_hkdf_info_64));
++	uint8_t hkdf_output_64[64];
++	size_t olen;
++	status = psa_export_key(hkdf_out_handle_fast, hkdf_output_64, sizeof(hkdf_output_64), &olen);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_export_key failed! (Error: %d)", status);
++		
++	} 
++	PRINT_HEX("hkdf_64", hkdf_output_64,  sizeof(hkdf_output_64));
++     uint16_t i;
++	for(i=0;i<16;i++)
++	{
++		if(hkdf_output_64[i] == rxData[i+69])
++		{
++				crypotogram_matched=true;
 +
-+    return;
++		}
++	}
++	if(crypotogram_matched==true)
++	{
++		LockStateChangebyNfc();
++	}
++    return 0;
 +}
 +
 +
@@ -1119,17 +1412,17 @@ index 0000000..5a1a073
 +    if( (err == ERR_NONE) && (*rxLen > 2) && rxData[*rxLen-2] == 0x90 && rxData[*rxLen-1] == 0x00)
 +    {
 +        /* Here more APDUs to implement the protocol are required. */
-+        PRINT_HEX("au1Re", rxData, *rxLen);
++        //PRINT_HEX("au1Re", rxData, *rxLen);
 +
 +    }
 +    else 
 +    {   
-+         PRINT_HEX("au1ReE", rxData, *rxLen);
-+		 crypto_finish();
++         //PRINT_HEX("au1ReE", rxData, *rxLen);
++		 //crypto_finish();
 +		 return -1;
 +    }
 +
-+     uint8_t s_secret[32]={0};
++   //  uint8_t s_secret[32]={0};
 +    create_ecdh_keypair(&ecdh_keypair_handle);
 +
 +    calculate_ecdh_secret(&ecdh_keypair_handle,
@@ -1158,7 +1451,7 @@ index 0000000..5a1a073
 +		LOG_INF("psa_hash_compute failed! (Error: %d)", status);
 +	}
 +
-+    uint8_t hkdf_output_key48[48];
++    //uint8_t hkdf_output_key48[48];
 +    uint8_t auth1_hkdf_info_48[101];
 +    uint8_t interface_to_end_48[]={0x5E ,0x01 ,0x01 ,0x56 ,0x6F ,0x6C ,0x61 ,0x74 ,0x69 ,0x6C ,0x65 ,0x5C ,0x02 ,0x02 ,0x00 ,0x5C ,0x04 ,0x02 ,0x00 ,0x01 ,0x00 };
 +    memcpy(auth1_hkdf_info_48,reader_ePK+1,32);
@@ -1178,7 +1471,7 @@ index 0000000..5a1a073
 +		
 +	}
 +    //PRINT_HEX("key48", hkdf_output_key48, sizeof(hkdf_output_key48));
-+    uint8_t kPersistent[32];
++    //uint8_t kPersistent[32];
 +    uint8_t auth1_hkdf_info_32[103];
 +    uint8_t interface_to_end_32[]={0x5E ,0x01 ,0x01 ,0x50 ,0x65 ,0x72 ,0x73 ,0x69 ,0x73 ,0x74 ,0x65 , 0x6e ,0x74 ,0x5C ,0x02 ,0x02 ,0x00 ,0x5C ,0x04 ,0x02 ,0x00 ,0x01 ,0x00 };
 +    memcpy(auth1_hkdf_info_32,reader_ePK+1,32);
@@ -1209,18 +1502,23 @@ index 0000000..5a1a073
 +    {
 +        LockStateChangebyNfc();
 +    }
-+
-+    crypto_finish();
++//auth1_have_done=true;
++   // crypto_finish();
 +	return 0;
 +}   
 +
 +void Make_control_flow_cmd()
 +{
 +    psa_status_t status;
-+    uint8_t control_flow_cmd[]={0x80,0x3c,0x01,0x00};
++    uint8_t control_flow_cmd[]={0x80,0x3c,0x40,0xa0};
 +    uint16_t   *rxLen;
 +    uint8_t    *rxData;
 +    ReturnCode err;
++	if(device_credential_key_added == true)
++	{
++		control_flow_cmd[2]=0x01;
++		control_flow_cmd[3]=0x00;	
++	}
 +     /* Exchange APDU: Unified Access APDUs */
 +    err = demoTransceiveBlocking( control_flow_cmd, sizeof(control_flow_cmd), &rxData, &rxLen, RFAL_FWT_NONE );
 +    if( (err == ERR_NONE)  && rxData[*rxLen-2] == 0x90 && rxData[*rxLen-1] == 0x00)
@@ -1236,7 +1534,13 @@ index 0000000..5a1a073
 +
 +void Make_ECPVASUP_cmd(uint8_t *data,size_t size)
 +{
-+    memcpy(data,demoEcpVasup,size);
++	uint8_t temp[40];
++
++ 	read_from_flash(temp,40);
++    memcpy(reader_group_id,temp,sizeof(reader_group_id));
++    memcpy(reader_SK,temp+sizeof(reader_group_id),sizeof(reader_SK));
++	memcpy(data,demoEcpVasup,size);
++	memcpy(data+8,reader_group_id,sizeof(reader_group_id));
 +}
 +
 +int make_select_cmd()
@@ -1249,7 +1553,7 @@ index 0000000..5a1a073
 +
 +    if( (err == ERR_NONE) && (*rxLen > 2) && rxData[*rxLen-2] == 0x90 && rxData[*rxLen-1] == 0x00)
 +    {
-+       //memcpy(select_resp,rxData,*rxLen-2);
++        //memcpy(select_resp,rxData,*rxLen-2);
 +
 +        return 0;
 +    }
@@ -1259,29 +1563,536 @@ index 0000000..5a1a073
 +        return -1;
 +    }
 +}
-+void uaap_expedited_standard_transaction( void )
++
++int make_exchange_cmd()
++{
++	uint8_t datafield[48]={0x00 ,0x8E ,0x22 ,0xC0 ,0x20 ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0xAA ,0x80 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00};
++	uint8_t iv_for_miv[16]={0};
++    uint8_t append_text[]={0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01};
++    uint8_t m_iv[16];
++	uint8_t encryptedData[48]; 
++	memcpy(datafield+5,s_secret,sizeof(s_secret));
++	encrypt_cbc_aes(m_iv,sizeof(m_iv),append_text,sizeof(append_text),iv_for_miv);
++	encrypt_cbc_aes(encryptedData,sizeof(encryptedData),datafield,sizeof(datafield),m_iv);
++	uint8_t mac_chaining_in[]={0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00};
++	uint8_t plain_txt_for_cmaccal[48+16];
++	memcpy(plain_txt_for_cmaccal,mac_chaining_in,sizeof(mac_chaining_in));
++	memcpy(plain_txt_for_cmaccal+sizeof(mac_chaining_in),encryptedData,sizeof(encryptedData));
++    import_cmac_key(hkdf_output_key48+16);
++	uint8_t cmac[16];
++	cmac_sign(plain_txt_for_cmaccal ,sizeof(plain_txt_for_cmaccal),cmac ,sizeof(cmac));
++	uint8_t exchange_head[]={0x84,0xc9,0x00,0x00,0x38};
++	uint8_t exchange_end[]={0x00};
++	uint8_t exchange_cmd[5+48+16+1];
++	memcpy(exchange_cmd,exchange_head,sizeof(exchange_head));
++	memcpy(exchange_cmd+sizeof(exchange_head),encryptedData,sizeof(encryptedData)); 
++	memcpy(exchange_cmd+sizeof(exchange_head)+sizeof(encryptedData),cmac,sizeof(cmac)); 
++	memcpy(exchange_cmd+sizeof(exchange_head)+sizeof(encryptedData)+sizeof(cmac),exchange_end,sizeof(exchange_end)); 
++
++	ReturnCode err;
++	uint16_t   *rxLen;
++    uint8_t    *rxData;
++     /* Exchange APDU: Unified Access APDUs */
++    err = demoTransceiveBlocking( exchange_cmd, sizeof(exchange_cmd), &rxData, &rxLen, RFAL_FWT_NONE );
++    if( (err == ERR_NONE)  && rxData[*rxLen-2] == 0x90 && rxData[*rxLen-1] == 0x00)
++    {
++        /* Here more APDUs to implement the protocol are required. */
++        LOG_INF("exchange sucess\n");
++
++    }else
++    {
++         LOG_INF("transaction fail\n");
++    }
++	return 0;
++}
++int make_select_stepup_cmd()
++{
++     ReturnCode err;
++    uint16_t   *rxLen;
++    uint8_t    *rxData;
++	static uint8_t select_stepup[] = { 0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x08, 0x58, 0x01, 0x02, 0x00};
++    err = demoTransceiveBlocking( select_stepup, sizeof(select_stepup), &rxData, &rxLen, RFAL_FWT_NONE );
++
++    if( (err == ERR_NONE)  && rxData[*rxLen-2] == 0x90 && rxData[*rxLen-1] == 0x00)
++    {
++        //memcpy(select_resp,rxData,*rxLen-2);
++		LOG_INF("stepup select suc\n");
++        return 0;
++    }
++    else
++    {
++         LOG_INF("select fail\n");
++        return -1;
++    }
++}
++static uint8_t handover_select[105];
++int make_conn_handover_cmd()
++{
++     ReturnCode err;
++    uint16_t   *rxLen;
++    uint8_t    *rxData;
++	static uint8_t handover_stepup[] = {0x00 ,0xC3 ,0x00 ,0x01 ,0x73 ,0x53 ,0x71 ,0x91 ,0x02 ,0x1E ,0x48 ,0x72 ,0x15 ,0x91 ,0x02 ,0x02 ,0x63 ,0x72 ,0x01 ,0x02 ,0x51 ,0x02 ,0x11 ,0x61 ,0x63 ,0x01 ,0x03 ,0x6E ,0x66 ,0x63 ,0x01 ,0x0A ,0x6D ,0x64 ,0x6F ,0x63 ,0x72 ,0x65 ,0x61 ,0x64 ,0x65 ,0x72 ,0x1C ,0x11 ,0x01 ,0x03 ,0x69 ,0x73 ,0x6F ,0x2E ,0x6F ,0x72 ,0x67 ,0x3A ,0x31 ,0x38 ,0x30 ,0x31 ,0x33 ,0x3A ,0x6E ,0x66 ,0x63 ,0x6E ,0x66 ,0x63 ,0x01 ,0x5C ,0x1E ,0x09 ,0x0A ,0x69 ,0x73 ,0x6F ,0x2E ,0x6F ,0x72 ,0x67 ,0x3A ,0x31 ,0x38 ,0x30 ,0x31 ,0x33 ,0x3A ,0x72 ,0x65 ,0x61 ,0x64 ,0x65 ,0x72 ,0x65 ,0x6E ,0x67 ,0x61 ,0x67 ,0x65 ,0x6D ,0x65 ,0x6E ,0x74 ,0x6D ,0x64 ,0x6F ,0x63 ,0x72 ,0x65 ,0x61 ,0x64 ,0x65 ,0x72 ,0xA2 ,0x00 ,0x63 ,0x31 ,0x2E ,0x30 ,0x20 ,0x81 ,0x29 ,0x00};
++    err = demoTransceiveBlocking( handover_stepup, sizeof(handover_stepup), &rxData, &rxLen, RFAL_FWT_NONE );
++
++    if( (err == ERR_NONE) && (*rxLen > 2) && rxData[*rxLen-2] == 0x90 && rxData[*rxLen-1] == 0x00)
++    {
++      
++		memcpy(handover_select,rxData,*rxLen-2);
++		LOG_INF("handover req suc\n");
++        return 0;
++    }
++    else
++    {
++         LOG_INF("handover req fail\n");
++        return -1;
++    }
++}
++
++static int import_hkdf_input_key_stepup(uint8_t *kdh)
++{
++	psa_status_t status;
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++
++	/* Configure the input key attributes */
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_DERIVE);
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_algorithm(&key_attributes, PSA_ALG_HKDF(PSA_ALG_SHA_256));
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_DERIVE);
++	psa_set_key_bits(&key_attributes,
++			 32 * 8);
++    //PRINT_HEX("kdhhkdf", kdh, 32);
++	/* Import the master key into the keystore */
++	status = psa_import_key(&key_attributes,
++				kdh,
++				32,
++				&hkdf_in_handle_stepup);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_import_key failed! (Error: %d)", status);
++		return -1;
++	}
++LOG_INF("import_hkdf_input_key successfully!");
++	return 0;
++}
++
++static int derive_hkdf_stepup(size_t out_key_size,uint8_t * m_ainfo , size_t info_len,uint8_t * m_salt,size_t salt_len)
++{
++	psa_status_t status;
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++	psa_key_derivation_operation_t operation =
++		PSA_KEY_DERIVATION_OPERATION_INIT;
++
++	LOG_INF("Deriving a key using HKDF and SHA256...");
++
++	/* Derived key settings
++	 * WARNING: This key usage makes the key exportable which is not safe and
++	 * is only done to demonstrate the validity of the results. Please do not use
++	 * this in production environments.
++	 */
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_RAW_DATA);
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_EXPORT); /* DONT USE IN PRODUCTION */
++	psa_set_key_bits(&key_attributes, out_key_size * 8);
++
++	/* Set the derivation algorithm */
++	status = psa_key_derivation_setup(&operation,
++					  PSA_ALG_HKDF(PSA_ALG_SHA_256));
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_setup failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Set the salt for the operation */
++	status = psa_key_derivation_input_bytes(&operation,
++						PSA_KEY_DERIVATION_INPUT_SALT,
++						m_salt,
++						salt_len);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_input_bytes failed! (Error: %d)", status);
++		return -1;
++	}
++	/* Set the master key for the operation */
++	status = psa_key_derivation_input_key(
++		&operation, PSA_KEY_DERIVATION_INPUT_SECRET, hkdf_in_handle_stepup);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_input_key failed! (Error: %d)", status);
++		return -1;
++	}
++
++    //PRINT_HEX("m_ainfo", m_ainfo, info_len);
++	/* Set the additional info for the operation */
++	status = psa_key_derivation_input_bytes(&operation,
++						PSA_KEY_DERIVATION_INPUT_INFO,
++						m_ainfo,
++						info_len);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_input_bytes failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Store the derived key in the keystore slot pointed by out_key_handle */
++	status = psa_key_derivation_output_key(&key_attributes, &operation, &hkdf_out_handle_stepup);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_output_key failed! (Error: %d)", status);
++		return -1;
++	}
++
++	/* Clean up the context */
++	status = psa_key_derivation_abort(&operation);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_key_derivation_abort failed! (Error: %d)", status);
++		return -1;
++	}
++
++	LOG_INF("stepup Key derivation successful!");
++
++	return 0;
++}
++
++int import_aesgcm_key(uint8_t * m_in_aesgcm_key, size_t key_size)
++{
++	psa_status_t status;
++
++	LOG_INF("import AES gcm key...");
++
++	/* Configure the key attributes */
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_algorithm(&key_attributes, PSA_ALG_GCM);
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_AES);
++	psa_set_key_bits(&key_attributes, 128);
++
++	/* Import the master key into the keystore */
++	status = psa_import_key(&key_attributes,
++				m_in_aesgcm_key,
++				key_size,
++				&aesgcm_key_handle);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_import_key failed! (Error: %d)", status);
++		return -1;
++	}
++	/* After the key handle is acquired the attributes are not needed */
++	psa_reset_key_attributes(&key_attributes);
++
++	LOG_INF("AES gcm key generated successfully!");
++
++	return 0;
++}
++int import_aesgcm_key_device(uint8_t * m_in_aesgcm_key, size_t key_size)
++{
++	psa_status_t status;
++
++	LOG_INF("import AES gcm key...");
++
++	/* Configure the key attributes */
++	psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++
++	psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
++	psa_set_key_lifetime(&key_attributes, PSA_KEY_LIFETIME_VOLATILE);
++	psa_set_key_algorithm(&key_attributes, PSA_ALG_GCM);
++	psa_set_key_type(&key_attributes, PSA_KEY_TYPE_AES);
++	psa_set_key_bits(&key_attributes, 128);
++
++	/* Import the master key into the keystore */
++	status = psa_import_key(&key_attributes,
++				m_in_aesgcm_key,
++				key_size,
++				&aesgcm_key_handle_device);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_import_key failed! (Error: %d)", status);
++		return -1;
++	}
++	/* After the key handle is acquired the attributes are not needed */
++	psa_reset_key_attributes(&key_attributes);
++
++	LOG_INF("AES gcm key generated successfully!");
++
++	return 0;
++}
++int make_data_tran_cmd()
++{
++    ReturnCode err;
++	psa_status_t status;
++    uint16_t   *rxLen;
++    uint8_t    *rxData;
++	    uint16_t   *rxLen1;
++    uint8_t    *rxData1;
++	    uint16_t   *rxLen2;
++    uint8_t    *rxData2;
++	    uint16_t   *rxLen3;
++    uint8_t    *rxData3;
++	//static uint8_t data_stepup[] = {0x00 ,0xc3 ,0x00 ,0x00 ,0xb7 ,0x53 ,0x81 ,0xb4 ,0xa1 ,0x64 ,0x64 ,0x61 ,0x74 ,0x61 ,0x58 ,0xac ,0x56 ,0xe2 ,0x5e ,0x16 ,0x79 ,0xc6 ,0x7b ,0x1a ,0xb5 ,0x6d ,0x54 ,0x5d ,0xf5 ,0xd4 ,0x2a ,0xcb ,0x53 ,0xab ,0xc3 ,0x6a ,0x81 ,0xbc ,0x0e ,0xeb ,0xa8 ,0xb3 ,0xf6 ,0x90 ,0x2e ,0x99 ,0x65 ,0xdd ,0x1b ,0xb6 ,0x32 ,0x59 ,0xe4 ,0xa8 ,0x39 ,0x3d ,0xaa ,0xfc ,0x3e ,0x70 ,0x61 ,0xb4 ,0x85 ,0x96 ,0x22 ,0x12 ,0x7d ,0x0c ,0xd5 ,0xe4 ,0x5b ,0xb5 ,0x10 ,0xe7 ,0x65 ,0xbe ,0x26 ,0x81 ,0xf6 ,0x2f ,0x05 ,0xda ,0xf1 ,0x30 ,0xea ,0x8f ,0xfb ,0xe5 ,0xe1 ,0xfe ,0x05 ,0xf9 ,0x04 ,0x3b ,0xab ,0xdc ,0xf9 ,0xe9 ,0xef ,0x46 ,0x8b ,0x36 ,0x8d ,0xb9 ,0x09 ,0x7e ,0x26 ,0xeb ,0xdc ,0x3d ,0xb2 ,0x74 ,0xf3 ,0xd7 ,0xbf ,0x17 ,0xc3 ,0xc0 ,0xbf ,0x8a ,0x40 ,0x3c ,0x73 ,0xec ,0x7a ,0xc0 ,0x19 ,0x43 ,0x4c ,0x87 ,0xac ,0x18 ,0xeb ,0xd5 ,0xc7 ,0x84 ,0xaf ,0xdc ,0xba ,0x50 ,0x87 ,0xad ,0xa6 ,0xd8 ,0x8d ,0x22 ,0x8d ,0x4c ,0x12 ,0xf1 ,0x08 ,0x20 ,0x9f ,0x1d ,0x80 ,0xf0 ,0x57 ,0xeb ,0x4b ,0x09 ,0x26 ,0xb8 ,0x01 ,0x52 ,0x80 ,0x36 ,0x51 ,0xed ,0xc5 ,0x78 ,0x54 ,0x63 ,0x9c ,0x4a ,0x0a ,0xcc ,0x42 ,0xd3 ,0x7c ,0x16 ,0xb6 ,0x8c ,0x59 ,0x92 ,0x3d ,0x93 ,0xc0 ,0x95 ,0x00};
++    uint8_t device_req[]={
++		0xa2 ,0x67 ,0x76 ,0x65 ,0x72 ,0x73 ,0x69 ,0x6f ,0x6e ,0x63 ,0x31 ,0x2e ,0x30 ,0x6b ,0x64 ,0x6f ,0x63 ,0x52 ,0x65 ,0x71 ,0x75 ,0x65 ,0x73 ,0x74 ,0x73 ,0x81 ,0xa1 ,0x6c ,0x69 ,0x74 ,0x65 ,0x6d ,0x73 ,0x52 ,0x65 ,0x71 ,0x75 ,0x65 ,0x73 ,0x74 ,0xd8 ,0x18 ,0x58 ,0x70 ,0xa2 ,0x67 ,0x64 ,0x6f ,0x63 ,0x54 ,0x79 ,0x70 ,0x65 ,0x78 ,0x1e ,0x63 ,0x6f ,0x6d ,0x2e ,0x61 ,0x70 ,0x70 ,0x6c ,0x65 ,0x2e ,0x48 ,0x6f ,0x6d ,0x65 ,0x4b ,0x69 ,0x74 ,0x2e ,0x31 ,0x2e ,0x63 ,0x72 ,0x65 ,0x64 ,0x65 ,0x6e ,0x74 ,0x69 ,0x61 ,0x6c ,0x6a ,0x6e ,0x61 ,0x6d ,0x65 ,0x53 ,0x70 ,0x61 ,0x63 ,0x65 ,0x73 ,0xa1 ,0x71 ,0x63 ,0x6f ,0x6d ,0x2e ,0x61 ,0x70 ,0x70 ,0x6c ,0x65 ,0x2e ,0x48 ,0x6f ,0x6d ,0x65 ,0x4b ,0x69 ,0x74 ,0xa2 ,0x6d ,0x63 ,0x72 ,0x65 ,0x64 ,0x65 ,0x6e ,0x74 ,0x69 ,0x61 ,0x6c ,0x5f ,0x69 ,0x64 ,0xf4 ,0x77 ,0x61 ,0x63 ,0x63 ,0x65 ,0x73 ,0x73 ,0x5f ,0x62 ,0x75 ,0x69 ,0x6c ,0x64 ,0x69 ,0x6e ,0x67 ,0x31 ,0x2e ,0x66 ,0x6c ,0x6f ,0x6f ,0x72 ,0x32 ,0xf4
++	};
++	 uint8_t device_req_encrepted[156+16];
++	uint8_t session_tranByte_forsalt[]={0xd8 ,0x18 ,0x58 ,0xe9 ,0x82 ,0xD8 ,0x18 ,0x49 ,0xA2 ,0x00 ,0x63 ,0x31 ,0x2E ,0x30 ,0x01 ,0x81 ,0x29 ,0x82 ,0x58 ,0x66 ,0x91 ,0x02 ,0x11 ,0x48 ,0x73 ,0x15 ,0xD1 ,0x02 ,0x0B ,0x61 ,0x63 ,0x01 ,0x03 ,0x6E ,0x66 ,0x63 ,0x01 ,0x04 ,0x6D ,0x64 ,0x6F ,0x63 ,0x1C ,0x11 ,0x09 ,0x03 ,0x69 ,0x73 ,0x6F ,0x2E ,0x6F ,0x72 ,0x67 ,0x3A ,0x31 ,0x38 ,0x30 ,0x31 ,0x33 ,0x3A ,0x6E ,0x66 ,0x63 ,0x6E ,0x66 ,0x63 ,0x01 ,0x03 ,0x01 ,0x10 ,0x00 ,0x03 ,0x02 ,0x10 ,0x00 ,0x5C ,0x1E ,0x09 ,0x04 ,0x69 ,0x73 ,0x6F ,0x2E ,0x6F ,0x72 ,0x67 ,0x3A ,0x31 ,0x38 ,0x30 ,0x31 ,0x33 ,0x3A ,0x64 ,0x65 ,0x76 ,0x69 ,0x63 ,0x65 ,0x65 ,0x6E ,0x67 ,0x61 ,0x67 ,0x65 ,0x6D ,0x65 ,0x6E ,0x74 ,0x6D ,0x64 ,0x6F ,0x63 ,0xA2 ,0x00 ,0x63 ,0x31 ,0x2E ,0x30 ,0x01 ,0x81 ,0x29 ,0x58 ,0x71 ,0x91 ,0x02 ,0x1E ,0x48 ,0x72 ,0x15 ,0x91 ,0x02 ,0x02 ,0x63 ,0x72 ,0x01 ,0x02 ,0x51 ,0x02 ,0x11 ,0x61 ,0x63 ,0x01 ,0x03 ,0x6E ,0x66 ,0x63 ,0x01 ,0x0A ,0x6D ,0x64 ,0x6F ,0x63 ,0x72 ,0x65 ,0x61 ,0x64 ,0x65 ,0x72 ,0x1C ,0x11 ,0x01 ,0x03 ,0x69 ,0x73 ,0x6F ,0x2E ,0x6F ,0x72 ,0x67 ,0x3A ,0x31 ,0x38 ,0x30 ,0x31 ,0x33 ,0x3A ,0x6E ,0x66 ,0x63 ,0x6E ,0x66 ,0x63 ,0x01 ,0x5C ,0x1E ,0x09 ,0x0A ,0x69 ,0x73 ,0x6F ,0x2E ,0x6F ,0x72 ,0x67 ,0x3A ,0x31 ,0x38 ,0x30 ,0x31 ,0x33 ,0x3A ,0x72 ,0x65 ,0x61 ,0x64 ,0x65 ,0x72 ,0x65 ,0x6E ,0x67 ,0x61 ,0x67 ,0x65 ,0x6D ,0x65 ,0x6E ,0x74 ,0x6D ,0x64 ,0x6F ,0x63 ,0x72 ,0x65 ,0x61 ,0x64 ,0x65 ,0x72 ,0xA2 ,0x00 ,0x63 ,0x31 ,0x2E ,0x30 ,0x20 ,0x81 ,0x29};
++    memcpy(session_tranByte_forsalt+20,handover_select+2,102);
++	uint8_t salt_stepup[32];
++	uint32_t output_len;
++	/* Compute the SHA256 hash*/
++	status = psa_hash_compute(PSA_ALG_SHA_256,
++				  session_tranByte_forsalt,
++				  sizeof(session_tranByte_forsalt),
++				  salt_stepup,
++				  sizeof(salt_stepup),
++				  &output_len);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_hash_compute failed! (Error: %d)", status);
++	}
++
++	import_hkdf_input_key_stepup(s_secret);
++	uint8_t m_ainfo_16[] = {0x53 ,0x4b ,0x52 ,0x65 ,0x61 ,0x64 ,0x65 ,0x72};
++	derive_hkdf_stepup(16,m_ainfo_16,sizeof(m_ainfo_16),salt_stepup,  sizeof(salt_stepup));
++	 size_t olen;
++	 uint8_t skreader_key[16];
++    /* Export the generated key content to verify it's value */
++	status = psa_export_key(hkdf_out_handle_stepup, skreader_key, sizeof(skreader_key), &olen);
++
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_export_key failed! (Error: %d)", status);
++		
++	}
++	uint8_t m_ainfo_16_device[] = {0x53 ,0x4b ,0x44 ,0x65 ,0x76 ,0x69 ,0x63 ,0x65};
++	derive_hkdf_stepup(16,m_ainfo_16_device,sizeof(m_ainfo_16_device),salt_stepup,  sizeof(salt_stepup));
++		
++	 uint8_t skdevice_key[16];
++    /* Export the generated key content to verify it's value */
++	status = psa_export_key(hkdf_out_handle_stepup, skdevice_key, sizeof(skdevice_key), &olen);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_export_key failed! (Error: %d)", status);
++		
++	}
++
++
++	//k_sleep(K_MSEC(10));
++	import_aesgcm_key(skreader_key,sizeof(skreader_key));
++	uint8_t m_iv_for_gcm[]={0x00 ,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01};
++	status = psa_aead_encrypt(aesgcm_key_handle,
++				  PSA_ALG_GCM,
++				  m_iv_for_gcm,
++				  sizeof(m_iv_for_gcm),
++				  NULL,
++				 0,
++				  device_req,
++				  sizeof(device_req),
++				  device_req_encrepted,
++				  sizeof(device_req_encrepted),
++				  &output_len);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_aead_encrypt failed! (Error: %d)", status);
++		return -1;
++	}
++
++	uint8_t session_establishment_data[16+156+16+1];
++    uint8_t session_establishment_head[]={0x00 ,0xC3 ,0x00 ,0x00 ,0xB7 ,0x53 ,0x81 ,0xB4 ,0xA1 ,0x64 ,0x64 ,0x61 ,0x74 ,0x61 ,0x58 ,0xAC};
++	uint8_t session_establishment_end[]={0x00};
++	memcpy(session_establishment_data,session_establishment_head,sizeof(session_establishment_head));
++	memcpy(session_establishment_data+sizeof(session_establishment_head),device_req_encrepted,sizeof(device_req_encrepted));
++	memcpy(session_establishment_data+sizeof(session_establishment_head)+sizeof(device_req_encrepted),session_establishment_end,sizeof(session_establishment_end));
++	uint8_t session_cmd1[]={0x00,0xc0,0x00,0x00,0x00};
++	uint8_t session_data[255+255+255+255];
++	uint32_t session_data_num=0;
++	err = demoTransceiveBlocking( session_establishment_data, sizeof(session_establishment_data), &rxData, &rxLen, RFAL_FWT_NONE );
++
++    if( (err == ERR_NONE) && (*rxLen > 2) && rxData[*rxLen-2] == 0x61 && rxData[*rxLen-1] == 0x00 )
++    {
++        
++		//LOG_INF("datat req suc\n");
++		
++		//PRINT_HEX("datat", rxData, *rxLen);
++		memcpy(session_data,rxData+13,((*rxLen)-15));
++		session_data_num=(*rxLen)-15;
++		//LOG_INF("session_data_num %u %u\n",session_data_num,(*rxLen));
++		k_sleep(K_MSEC(10));
++		err = demoTransceiveBlocking( session_cmd1, sizeof(session_cmd1), &rxData1, &rxLen1, RFAL_FWT_NONE );
++		if( (err == ERR_NONE) && (*rxLen1 > 2) && rxData1[*rxLen1-2] == 0x61 && rxData1[*rxLen1-1] == 0x00 )
++		{
++			//PRINT_HEX("datat1", rxData1, *rxLen1);
++			memcpy(session_data+session_data_num,rxData1,*rxLen1-2);
++			session_data_num=session_data_num+(*rxLen1-2);
++			//LOG_INF("session_data_num %u %u\n",session_data_num,(*rxLen1));
++			k_sleep(K_MSEC(10));
++			err = demoTransceiveBlocking( session_cmd1, sizeof(session_cmd1), &rxData2, &rxLen2, RFAL_FWT_NONE );
++			if( (err == ERR_NONE) && (*rxLen2 > 2) && rxData2[*rxLen2-2] == 0x61 )
++			{
++				//PRINT_HEX("data2", rxData2, *rxLen2);
++				memcpy(session_data+session_data_num,rxData2,*rxLen2-2);
++				session_data_num=session_data_num+(*rxLen2-2);
++				session_cmd1[4]=rxData2[*rxLen2-1];
++				//LOG_INF("session_data_num %u %u\n",session_data_num,(*rxLen2));
++				k_sleep(K_MSEC(10));
++				err = demoTransceiveBlocking( session_cmd1, sizeof(session_cmd1), &rxData3, &rxLen3, RFAL_FWT_NONE );
++				if( (err == ERR_NONE) && (*rxLen3 > 2) && rxData3[*rxLen3-2] == 0x90 && rxData3[*rxLen3-1] == 0x00 )
++				{
++					PRINT_HEX("data3", rxData3, *rxLen3);
++					memcpy(session_data+session_data_num,rxData3,*rxLen3-2);
++					session_data_num=session_data_num+(*rxLen3-2);
++					LOG_INF("session_data_num %u ******%u\n",session_data_num,*rxLen3);
++				}else
++				{
++					 LOG_INF("datat req3 fail\n");
++					return -1;
++				}
++			}else
++			{
++				 LOG_INF("datat req2 fail\n");
++				return -1;
++			}
++		}else
++		{
++			 LOG_INF("datat req1 fail\n");
++			return -1;
++		}
++
++        //return 0;
++    }
++    else
++    {
++         LOG_INF("datat req fail\n");
++		  PRINT_HEX("datat", rxData, *rxLen);
++        return -1;
++    }
++	LOG_INF("decrept session data\n");
++#if 0
++	uint8_t m_ainfo_16_device[] = {0x53 ,0x4b ,0x44 ,0x65 ,0x76 ,0x69 ,0x63 ,0x65};
++	derive_hkdf_stepup(16,m_ainfo_16_device,sizeof(m_ainfo_16_device),salt_stepup,  sizeof(salt_stepup));
++		
++	 uint8_t skdevice_key[16];
++    /* Export the generated key content to verify it's value */
++	status = psa_export_key(hkdf_out_handle_stepup, skdevice_key, sizeof(skdevice_key), &olen);
++
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_export_key failed! (Error: %d)", status);
++		
++	}
++#endif
++	//k_sleep(K_MSEC(10));
++	import_aesgcm_key_device(skdevice_key,sizeof(skdevice_key));
++	uint8_t m_iv_for_gcm_device[]={0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x01 ,0x00 ,0x00 ,0x00 ,0x01};
++	uint8_t session_data_decrepted[255+255+255+255];
++		/* Decrypt and authenticate the encrypted data */
++	status = psa_aead_decrypt(aesgcm_key_handle_device,
++				  PSA_ALG_GCM,
++				  m_iv_for_gcm_device,
++				  sizeof(m_iv_for_gcm_device),
++				  NULL,
++				  0,
++				  session_data,
++				session_data_num,
++				  session_data_decrepted,
++				  sizeof(session_data_decrepted),
++				  &output_len);
++	if (status != PSA_SUCCESS) {
++		LOG_INF("psa_aead_decrypt failed! (Error: %d)", status);
++		return -1;
++	}
++	//PRINT_HEX("session_data_decrepted", session_data_decrepted, output_len);
++	uint16_t i,j,k,l;
++	uint8_t aim_string={0x64 ,0x65 ,0x76 ,0x69 ,0x63 ,0x65 ,0x4B ,0x65 ,0x79};
++	//uint8_t device_credential_key[64];
++	for(i=0;i<output_len;i++)
++	{
++	  if(session_data_decrepted[i]== 0x64 &&
++	     session_data_decrepted[i+1]== 0x65 && 
++		 session_data_decrepted[i+2]== 0x76 &&
++		 session_data_decrepted[i+3]== 0x69 &&
++		 session_data_decrepted[i+4]== 0x63 &&
++		 session_data_decrepted[i+5]== 0x65 &&
++		 session_data_decrepted[i+6]== 0x4b &&
++		 session_data_decrepted[i+7]== 0x65 &&
++		 session_data_decrepted[i+8]== 0x79 &&
++		 session_data_decrepted[i+9]!= 0x49 &&
++		 session_data_decrepted[i+10]!= 0x6e &&
++		 session_data_decrepted[i+11]!= 0x66 &&
++		 session_data_decrepted[i+12]!= 0x6f 
++		 )
++		 {
++				for(j=i;j<output_len;j++)
++				{
++					 if(session_data_decrepted[j]== 0x58 &&
++	     				session_data_decrepted[j+1]== 0x20  )
++						{
++							for(k=0;k<32;k++)
++							{
++								device_credential_key[k]=session_data_decrepted[j+2+k];
++							}
++							break;
++						}
++						
++
++				}
++				for(l=j+2;l<output_len;l++)
++				{
++					 if(session_data_decrepted[l]== 0x58 &&
++	     				session_data_decrepted[l+1]== 0x20  )
++						{
++							for(k=0;k<32;k++)
++							{
++								device_credential_key[k+32]=session_data_decrepted[l+2+k];
++							}
++							break;
++						}
++				}
++				break;
++		 }
++	}
++	PRINT_HEX("device_credential_key", device_credential_key, 64);
++	HAPPlatformNfcAccessDeviceCredentialKey device_key_data;
++	NfcAccessStatusCode statuscode;
++	device_key_data.issuerKeyIdentifier=issuekey_identifier;
++	device_key_data.key=device_credential_key;
++	device_key_data.state=1;
++	device_key_data.type=2;
++	device_key_data.keyNumBytes=64;
++	HAPPlatformNfcAccessDeviceCredentialKeyAdd(&device_key_data,&statuscode);
++	LockStateChangebyNfc();
++} 
++void uaap_transactions( void )
 +{
 + int  err;
 +    if(0 != make_select_cmd())
 +    {
++		crypto_finish();
 +        return;
 +    }
-+	k_sleep(K_MSEC(30));
++	k_sleep(K_MSEC(10));
 +    if(0 != Make_AUTH0_cmd())
 +    {
++		crypto_finish();
 +        return;
 +    }
-+    k_sleep(K_MSEC(30));
-+    if(0 != Make_AUTH1_cmd())
++    k_sleep(K_MSEC(10));
++	if(crypotogram_matched == false)
 +	{
-+		return;
++    	if(0 != Make_AUTH1_cmd())
++		{
++			crypto_finish();
++			return;
++		}
 +	}
-+	k_sleep(K_MSEC(30));
-+    Make_control_flow_cmd();
-+    
 +
++	if(device_credential_key_added == false)
++	{
++		//k_sleep(K_MSEC(30));
++		make_exchange_cmd();
++		//k_sleep(K_MSEC(30));
++    	Make_control_flow_cmd();
++		//k_sleep(K_MSEC(30));
++		make_select_stepup_cmd();
++		k_sleep(K_MSEC(10));
++		make_conn_handover_cmd();
++		k_sleep(K_MSEC(10));
++		make_data_tran_cmd();
++	}
++	else
++	{
++		Make_control_flow_cmd();
++	}
++    crypto_finish();
 +}
-\ No newline at end of file
++
 -- 
 2.33.0.windows.2
 

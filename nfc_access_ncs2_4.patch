@@ -1,27 +1,28 @@
-From 1b24a286f9c2175b7ee68cbf00f21100e6c5e2ab Mon Sep 17 00:00:00 2001
+From c8cdf163f898bb50010552bfdf24161e55d6b36d Mon Sep 17 00:00:00 2001
 From: andrew li <andrew.li@nordicsemi.no>
-Date: Fri, 15 Dec 2023 16:13:05 +0800
-Subject: [PATCH] homekey release 12/15
+Date: Tue, 9 Jan 2024 16:15:42 +0800
+Subject: [PATCH] homekey release 1/9/2024
 
 ---
- CMakeLists.txt                                |    7 +-
- adk/PAL/nRF52/HAPPlatformNfcAccess.c          |   34 +-
+ CMakeLists.txt                                |    8 +-
+ .../Common/Platform/AppUserInputGeneric.c     |    6 +-
+ adk/PAL/nRF52/HAPPlatformNfcAccess.c          |   60 +-
  .../nrf52840dk_nrf52840.overlay               |   34 +
  samples/lock/CMakeLists.txt                   |    2 +
  samples/lock/prj.conf                         |   25 +-
  samples/lock/prj_debug.conf                   |   32 +-
- samples/lock/src/app.c                        |   10 +
+ samples/lock/src/app.c                        |   18 +
  samples/lock/src/tag_reader.c                 |   95 +
- samples/lock/src/uaap_cmds.c                  | 1690 +++++++++++++++++
- 9 files changed, 1921 insertions(+), 8 deletions(-)
+ samples/lock/src/uaap_cmds.c                  | 1698 +++++++++++++++++
+ 10 files changed, 1966 insertions(+), 12 deletions(-)
  create mode 100644 samples/lock/src/tag_reader.c
  create mode 100644 samples/lock/src/uaap_cmds.c
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index c9b129e..345f5bd 100644
+index c9b129e..7c84858 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -82,6 +82,10 @@ if(CONFIG_HOMEKIT)
+@@ -82,6 +82,11 @@ if(CONFIG_HOMEKIT)
      target_compile_definitions(homekit_interface INTERFACE
        HAVE_NFC=1
        HAP_FEATURE_NFC=1
@@ -29,10 +30,11 @@ index c9b129e..345f5bd 100644
 +      HAP_FEATURE_NFC_ACCESS=1
 +      HAVE_KEY_EXPORT=1
 +      HAP_FEATURE_KEY_EXPORT=1
++	  HAP_TESTING=1
      )
    else()
      target_compile_definitions(homekit_interface INTERFACE
-@@ -256,7 +260,7 @@ endif()
+@@ -256,7 +261,7 @@ endif()
    FILE(GLOB app_generic_input adk/Applications/Common/Platform/AppUserInputGeneric.c)
    FILE(GLOB app_db adk/Applications/Common/DB/*.c)
    FILE(GLOB app_helper adk/Applications/Common/Helper/*.c)
@@ -41,7 +43,7 @@ index c9b129e..345f5bd 100644
    list(FILTER app_helper EXCLUDE REGEX .*/adk/Applications/Common/Helper/StandardInputHandler.c)
  
    
-@@ -273,6 +277,7 @@ endif()
+@@ -273,6 +278,7 @@ endif()
      ${app_generic_input}
      ${app_db}
      ${app_helper}
@@ -49,11 +51,35 @@ index c9b129e..345f5bd 100644
    )
    
    zephyr_library_include_directories(${ZEPHYR_BASE}/subsys/bluetooth/host)
+diff --git a/adk/Applications/Common/Platform/AppUserInputGeneric.c b/adk/Applications/Common/Platform/AppUserInputGeneric.c
+index 36b2ba3..5896755 100644
+--- a/adk/Applications/Common/Platform/AppUserInputGeneric.c
++++ b/adk/Applications/Common/Platform/AppUserInputGeneric.c
+@@ -53,7 +53,9 @@ HAP_DIAGNOSTIC_IGNORED_GCC("-Wpedantic") // ISO C forbids an empty translation u
+ 
+ #if (HAP_TESTING == 1)
+ #include "AppUserInput.h"
+-
++#include <zephyr/logging/log.h>
++LOG_MODULE_DECLARE(st25r3916);//add by andrew
++extern void writeToFlash(void *data , size_t len);
+ /**
+  * Request a factory reset
+  *
+@@ -111,6 +113,8 @@ void AppUserInputEventCallback(void* _Nullable context, size_t contextSize) {
+         }
+         case kAppUserInputIdentifier_2: {
+             HAPLogInfo(&kHAPLog_Default, "%s: Performing factory reset", __func__);
++            LOG_INF("button2 pressed\n");
++            writeToFlash(NULL , 0);
+             FactoryReset();
+             break;
+         }
 diff --git a/adk/PAL/nRF52/HAPPlatformNfcAccess.c b/adk/PAL/nRF52/HAPPlatformNfcAccess.c
-index e4a8d27..079fcde 100644
+index e4a8d27..5b24485 100644
 --- a/adk/PAL/nRF52/HAPPlatformNfcAccess.c
 +++ b/adk/PAL/nRF52/HAPPlatformNfcAccess.c
-@@ -50,9 +50,22 @@
+@@ -50,9 +50,24 @@
  #include "HAPCharacteristicTypes.h"
  #include "HAPCrypto.h"
  #include "HAPPlatform.h"
@@ -74,11 +100,28 @@ index e4a8d27..079fcde 100644
 +extern uint8_t reader_group_id[NFC_ACCESS_KEY_IDENTIFIER_BYTES];
 +extern uint8_t issuekey_identifier[8];
 +extern bool device_credential_key_added;
++extern bool device_credential_key_suspend;
++extern  bool bool_readkey_added;
 +extern void writeToFlash(void *data , size_t len);
  /**
   * The salt value used with a key value to create a hash for the Identifier field
   */
-@@ -831,7 +844,9 @@ HAPError HAPPlatformNfcAccessIssuerKeyAdd(
+@@ -61,12 +76,12 @@
+ /**
+  * Default number of NFC Access Issuer Keys supported
+  */
+-#define kHAPPlatformNfcAccessIssuerKeyListSize 15
++#define kHAPPlatformNfcAccessIssuerKeyListSize 16
+ 
+ /**
+  * Default number of active NFC Access Device Credential Keys supported
+  */
+-#define kHAPPlatformNfcAccessDeviceCredentialKeyActiveListSize 10
++#define kHAPPlatformNfcAccessDeviceCredentialKeyActiveListSize 16
+ 
+ /**
+  * Default number of suspended NFC Access Device Credential Keys supported
+@@ -831,7 +846,9 @@ HAPError HAPPlatformNfcAccessIssuerKeyAdd(
      HAPRawBufferCopyBytes(entry->identifier, identifier, NFC_ACCESS_KEY_IDENTIFIER_BYTES);
  
      // VENDOR-TODO: Add issuer key to the reader
@@ -89,21 +132,47 @@ index e4a8d27..079fcde 100644
      nfcAccessIssuerKeyList.numEntries++;
  
      HAPError err = HAPPlatformKeyValueStoreSet(
-@@ -1110,7 +1125,9 @@ HAPError HAPPlatformNfcAccessDeviceCredentialKeyAdd(
+@@ -1065,6 +1082,15 @@ HAPError HAPPlatformNfcAccessDeviceCredentialKeyAdd(
+                 }
+ 
+                 // VENDOR-TODO: Update the state of the device credential key on the reader
++                if(deviceCredentialKey->state == kHAPCharacteristicValue_NfcAccessDeviceCredentialKey_State_Suspended)
++                {
++                    device_credential_key_suspend=true;
++                }
++                else
++                {
++                    device_credential_key_suspend=false;
++                }
++                LOG_INF("deviceCredentialKeystate %d@@@@@@\n",deviceCredentialKey->state);
+                 *statusCode = NFC_ACCESS_STATUS_CODE_SUCCESS;
+                 return kHAPError_None;
+             }
+@@ -1110,7 +1136,18 @@ HAPError HAPPlatformNfcAccessDeviceCredentialKeyAdd(
  
      // VENDOR-TODO: Either add device credential key to the reader or update the entry with a new key if the LRU is
      // evicted
 -
++    if(deviceCredentialKey->state == kHAPCharacteristicValue_NfcAccessDeviceCredentialKey_State_Suspended)
++    {
++        device_credential_key_suspend=true;
++    }
++    else
++    {
++        device_credential_key_suspend=false;
++    }
 +    device_credential_key_added=true;
 +    PRINT_HEX("deviceCredentialKey",deviceCredentialKey->key,  deviceCredentialKey->keyNumBytes);
 +     PRINT_HEX("issuerKeyIdentifier",  deviceCredentialKey->issuerKeyIdentifier, NFC_ACCESS_KEY_IDENTIFIER_BYTES);
++    LOG_INF("deviceCredentialKeystate %d@@@@@@\n",deviceCredentialKey->state);
      IncrementDeviceCredentialKeyNumEntries(deviceCredentialKey->state);
  
      if (nfcAccessDeviceCredentialKeyList.counter == 0) {
-@@ -1289,6 +1306,15 @@ HAPError HAPPlatformNfcAccessReaderKeyAdd(
+@@ -1289,7 +1326,16 @@ HAPError HAPPlatformNfcAccessReaderKeyAdd(
      }
  
      // VENDOR-TODO: Add reader key to the reader
+-
 +    // add by andrew
 +    uint8_t temp[40];
 +    
@@ -113,9 +182,10 @@ index e4a8d27..079fcde 100644
 +     HAPRawBufferCopyBytes(temp, identifier, NFC_ACCESS_KEY_IDENTIFIER_BYTES);
 +     HAPRawBufferCopyBytes(temp+NFC_ACCESS_KEY_IDENTIFIER_BYTES, readerKey->key, readerKey->keyNumBytes);
 +     writeToFlash(temp, 40);
- 
++    bool_readkey_added=true;
      *statusCode = NFC_ACCESS_STATUS_CODE_SUCCESS;
      return kHAPError_None;
+ }
 diff --git a/samples/common/configuration/nrf52840dk_nrf52840/nrf52840dk_nrf52840.overlay b/samples/common/configuration/nrf52840dk_nrf52840/nrf52840dk_nrf52840.overlay
 index 0357cfa..994ba2f 100644
 --- a/samples/common/configuration/nrf52840dk_nrf52840/nrf52840dk_nrf52840.overlay
@@ -276,10 +346,33 @@ index 6994fc7..d8f4534 100644
 +CONFIG_FLASH=y
 \ No newline at end of file
 diff --git a/samples/lock/src/app.c b/samples/lock/src/app.c
-index fbcee27..a10deec 100644
+index fbcee27..1cda520 100644
 --- a/samples/lock/src/app.c
 +++ b/samples/lock/src/app.c
-@@ -965,6 +965,16 @@ HAPError HandleLockMechanismLockTargetStateWrite(
+@@ -110,7 +110,10 @@
+ #endif
+ 
+ #include "PowerManagment.h"
++#include <zephyr/logging/log.h>
+ 
++LOG_MODULE_DECLARE(st25r3916);//add by andrew
++extern void writeToFlash(void *data , size_t len);
+ ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ /**
+  * Key used in the key value store to store the configuration state.
+@@ -567,6 +570,11 @@ static void HandleUserInputEventCallback(void* _Nullable context, size_t context
+             ToggleLockState();
+             break;
+         }
++        case kAppUserInputIdentifier_2: { // SIGQUIT or Button 2
++            LOG_INF("button2 pressed\n");
++            writeToFlash(NULL , 0);
++            break;
++        }
+         default: {
+             break;
+         }
+@@ -965,6 +973,16 @@ HAPError HandleLockMechanismLockTargetStateWrite(
      return kHAPError_None;
  }
  
@@ -399,10 +492,10 @@ index 0000000..8bf54f0
 +K_THREAD_DEFINE(tag, 8192, tag_reader, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO , 0, 0);
 diff --git a/samples/lock/src/uaap_cmds.c b/samples/lock/src/uaap_cmds.c
 new file mode 100644
-index 0000000..84e4344
+index 0000000..fbab9fd
 --- /dev/null
 +++ b/samples/lock/src/uaap_cmds.c
-@@ -0,0 +1,1690 @@
+@@ -0,0 +1,1698 @@
 +/******************************************************************************
 +  * @attention
 +  *
@@ -570,11 +663,13 @@ index 0000000..84e4344
 +
 +uint8_t issuekey_identifier[8];
 +bool device_credential_key_added=false;
++bool device_credential_key_suspend=false;
 +static uint8_t device_credential_key[64];
 +static uint8_t kPersistent[32];
 +//static bool auth1_have_done=false;
 +static bool reader_group_sub_id_gen=false;
 +static	bool crypotogram_matched=false;
++ bool bool_readkey_added=false;
 +extern void read_from_flash(uint8_t *tmp, size_t size);
 +
 +static int crypto_finish(void)
@@ -1371,7 +1466,10 @@ index 0000000..84e4344
 +	}
 +	if(crypotogram_matched==true)
 +	{
++		if(device_credential_key_suspend==false)
++        {
 +		LockStateChangebyNfc();
++		}
 +	}
 +    return 0;
 +}
@@ -1500,7 +1598,10 @@ index 0000000..84e4344
 +    import_ecdsa_pub_key();
 +    if(0==verify_endp_message(m_decrypted_text+69,64))
 +    {
++		if(device_credential_key_suspend==false)
++        {
 +        LockStateChangebyNfc();
++		}
 +    }
 +//auth1_have_done=true;
 +   // crypto_finish();
@@ -2073,7 +2174,7 @@ index 0000000..84e4344
 +		}
 +	}
 +
-+	if(device_credential_key_added == false)
++	if(device_credential_key_added == false && bool_readkey_added ==true)
 +	{
 +		//k_sleep(K_MSEC(30));
 +		make_exchange_cmd();
@@ -2086,7 +2187,7 @@ index 0000000..84e4344
 +		k_sleep(K_MSEC(10));
 +		make_data_tran_cmd();
 +	}
-+	else
++	else if( bool_readkey_added == true)
 +	{
 +		Make_control_flow_cmd();
 +	}
